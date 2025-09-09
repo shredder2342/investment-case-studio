@@ -166,66 +166,85 @@ export default function Page() {
     }
     setIsGenerating(false);
   }
+async function exportPDF() {
+  const container = draftRef.current;
+  if (!container) return;
 
-  async function exportPDF() {
-    const container = draftRef.current;
-    if (!container) return;
-    const pdf = new jsPDF({ unit: "pt", format: "a4" });
-    const padding = 24;
+  // helper: Title Case company name (e.g., "apple inc" -> "Apple Inc")
+  const toTitleCase = (s: string) =>
+    s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
-    // Brand header bar
-    pdf.setFillColor(31, 43, 110);
-    pdf.rect(0, 0, pdf.internal.pageSize.getWidth(), 60, "F");
-    try {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = BRAND.logoPath;
-      await new Promise((r) => { img.onload = r; img.onerror = r; });
-      pdf.addImage(img, "JPEG", 36, 14, 90, 32);
-    } catch (e) {}
-    pdf.setTextColor(255,255,255);
-    pdf.setFontSize(16);
-    pdf.text(`${BRAND.name} · Investment Case`, 140, 40);
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const padding = 24;
 
-    // Cover Title
-    pdf.setTextColor(0,0,0);
-    pdf.setFont("helvetica","bold");
-    pdf.setFontSize(22);
-    pdf.text("Investment Case", 72, 140);
-    pdf.setFontSize(14);
-    pdf.setFont("helvetica","normal");
-    pdf.text(`${company || "<Company>"} (${ticker || "<TICKR>"})`, 72, 170);
-    pdf.text(`Template: ${TEMPLATES.find(t => t.id === templateId)?.name}`, 72, 190);
-    pdf.text(`Region: ${region}  •  Currency: ${currency}`, 72, 210);
-    pdf.text(`Prepared with ChatGPT-5 — ${BRAND.name}`, 72, 230);
+  // ---- ECP header bar (kept) ----
+  pdf.setFillColor(31, 43, 110);
+  pdf.rect(0, 0, pdf.internal.pageSize.getWidth(), 60, "F");
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = "/ecp-logo.jpg";
+    await new Promise((r) => { img.onload = r; img.onerror = r; });
+    pdf.addImage(img, "JPEG", 36, 14, 90, 32);
+  } catch (e) {}
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFontSize(16);
+  pdf.text("European Capital Partners · Investment Case", 140, 40);
 
-    pdf.addPage();
+  // ---- Centered cover content (updated) ----
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
 
-    // Render markdown to image and paginate
-    const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = pageWidth - padding * 2;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  const titleY = pageHeight / 2 - 20;
+  const companyY = titleY + 34;
+  const meta1Y = companyY + 24;
+  const meta2Y = meta1Y + 18;
 
-    let remaining = imgHeight;
-    let sY = 0;
-    const pageCanvasHeight = ((pageHeight - padding * 2) * canvas.width) / imgWidth;
+  pdf.setTextColor(0, 0, 0);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(28);
+  pdf.text("Investment Case", pageWidth / 2, titleY, { align: "center" });
 
-    while (remaining > 0) {
-      const pageCanvas = document.createElement("canvas");
-      pageCanvas.width = canvas.width;
-      pageCanvas.height = Math.min(pageCanvasHeight, canvas.height - sY);
-      const pageCtx = pageCanvas.getContext("2d")!;
-      pageCtx.drawImage(canvas, 0, sY, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height);
-      const pageImg = pageCanvas.toDataURL("image/png");
-      pdf.addImage(pageImg, "PNG", padding, padding, imgWidth, (pageCanvas.height * imgWidth) / canvas.width);
-      remaining -= (pageCanvas.height * imgWidth) / canvas.width;
-      sY += pageCanvas.height;
-      if (remaining > 0) pdf.addPage();
-    }
-    pdf.save(`${company || "Investment_Case"}_${ticker || "TICKR"}.pdf`);
+  const displayCompany = company ? toTitleCase(company) : "<Company>";
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(16);
+  pdf.text(displayCompany, pageWidth / 2, companyY, { align: "center" });
+
+  const templateName = TEMPLATES.find(t => t.id === templateId)?.name ?? "";
+  pdf.setFontSize(12);
+  pdf.text(`Template: ${templateName}`, pageWidth / 2, meta1Y, { align: "center" });
+  pdf.text(`Region: ${region}  •  Currency: ${currency}`, pageWidth / 2, meta2Y, { align: "center" });
+
+  // (removed the "Prepared with ChatGPT-5 — European Capital Partners" line)
+
+  pdf.addPage();
+
+  // ---- Render the memo pages (unchanged) ----
+  const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+  const imgWidth = pageWidth - padding * 2;
+  const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+  let remaining = imgHeight;
+  let sY = 0;
+  const pageCanvasHeight = ((pageHeight - padding * 2) * canvas.width) / imgWidth;
+
+  while (remaining > 0) {
+    const pageCanvas = document.createElement("canvas");
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = Math.min(pageCanvasHeight, canvas.height - sY);
+    const pageCtx = pageCanvas.getContext("2d")!;
+    pageCtx.drawImage(canvas, 0, sY, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height);
+    const pageImg = pageCanvas.toDataURL("image/png");
+    pdf.addImage(pageImg, "PNG", padding, padding, imgWidth, (pageCanvas.height * imgWidth) / canvas.width);
+    remaining -= (pageCanvas.height * imgWidth) / canvas.width;
+    sY += pageCanvas.height;
+    if (remaining > 0) pdf.addPage();
   }
+
+  pdf.save(`${displayCompany.replace(/\\s+/g, "_")}_Investment_Case.pdf`);
+}
+
+  
 
   function addSection() { setCustomSections(prev => [...prev, `Custom Section ${prev.length + 1}`]); }
   function updateSection(i: number, val: string) { setCustomSections(prev => prev.map((s, idx) => (idx === i ? val : s))); }
