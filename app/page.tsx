@@ -170,16 +170,18 @@ async function exportPDF() {
   const container = draftRef.current;
   if (!container) return;
 
-  // helper: Title Case company name (e.g., "apple inc" -> "Apple Inc")
+  // helper: Title Case company name (e.g., "apple" -> "Apple")
   const toTitleCase = (s: string) =>
     s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
+  // ---- jsPDF setup
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
-  const padding = 24;
+  const pageWidth  = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
 
-  // ---- ECP header bar (kept) ----
-  pdf.setFillColor(31, 43, 110);
-  pdf.rect(0, 0, pdf.internal.pageSize.getWidth(), 60, "F");
+  // ---- Cover (centered), no ChatGPT line
+  pdf.setFillColor(31, 43, 110);            // ECP header bar
+  pdf.rect(0, 0, pageWidth, 60, "F");
   try {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -191,57 +193,82 @@ async function exportPDF() {
   pdf.setFontSize(16);
   pdf.text("European Capital Partners · Investment Case", 140, 40);
 
-  // ---- Centered cover content (updated) ----
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-
-  const titleY = pageHeight / 2 - 20;
+  const titleY   = pageHeight / 2 - 20;
   const companyY = titleY + 34;
-  const meta1Y = companyY + 24;
-  const meta2Y = meta1Y + 18;
-
-  pdf.setTextColor(0, 0, 0);
-  pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(28);
-  pdf.text("Investment Case", pageWidth / 2, titleY, { align: "center" });
+  const meta1Y   = companyY + 24;
+  const meta2Y   = meta1Y + 18;
 
   const displayCompany = company ? toTitleCase(company) : "<Company>";
-  pdf.setFont("helvetica", "normal");
-  pdf.setFontSize(16);
+  const templateName   = TEMPLATES.find(t => t.id === templateId)?.name ?? "";
+
+  pdf.setTextColor(0, 0, 0);
+  pdf.setFont("helvetica", "bold");  pdf.setFontSize(28);
+  pdf.text("Investment Case", pageWidth / 2, titleY, { align: "center" });
+
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(16);
   pdf.text(displayCompany, pageWidth / 2, companyY, { align: "center" });
 
-  const templateName = TEMPLATES.find(t => t.id === templateId)?.name ?? "";
   pdf.setFontSize(12);
   pdf.text(`Template: ${templateName}`, pageWidth / 2, meta1Y, { align: "center" });
   pdf.text(`Region: ${region}  •  Currency: ${currency}`, pageWidth / 2, meta2Y, { align: "center" });
 
-  // (removed the "Prepared with ChatGPT-5 — European Capital Partners" line)
-
   pdf.addPage();
 
-  // ---- Render the memo pages (unchanged) ----
-  const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-  const imgWidth = pageWidth - padding * 2;
-  const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  // ---- CLEAN CLONE for export (no border/rounded, no blockquote bars)
+  const clone = container.cloneNode(true) as HTMLElement;
 
-  let remaining = imgHeight;
-  let sY = 0;
-  const pageCanvasHeight = ((pageHeight - padding * 2) * canvas.width) / imgWidth;
+  // remove the outer card styles that create a box/border
+  (clone as HTMLElement).style.border = "0";
+  (clone as HTMLElement).style.boxShadow = "none";
+  (clone as HTMLElement).style.background = "#ffffff";
+  (clone as HTMLElement).style.padding = "0";
 
-  while (remaining > 0) {
-    const pageCanvas = document.createElement("canvas");
-    pageCanvas.width = canvas.width;
-    pageCanvas.height = Math.min(pageCanvasHeight, canvas.height - sY);
-    const pageCtx = pageCanvas.getContext("2d")!;
-    pageCtx.drawImage(canvas, 0, sY, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height);
-    const pageImg = pageCanvas.toDataURL("image/png");
-    pdf.addImage(pageImg, "PNG", padding, padding, imgWidth, (pageCanvas.height * imgWidth) / canvas.width);
-    remaining -= (pageCanvas.height * imgWidth) / canvas.width;
-    sY += pageCanvas.height;
-    if (remaining > 0) pdf.addPage();
-  }
+  // kill blockquote left bars for export only
+  clone.querySelectorAll("blockquote").forEach((el) => {
+    (el as HTMLElement).style.borderLeft = "0";
+    (el as HTMLElement).style.marginLeft = "0";
+    (el as HTMLElement).style.paddingLeft = "0";
+  });
 
-  pdf.save(`${displayCompany.replace(/\\s+/g, "_")}_Investment_Case.pdf`);
+  // OPTIONAL: strip common AI disclaimers if present
+  // (keeps everything else untouched)
+  const killDisclaimers = (root: HTMLElement) => {
+    const text = root.innerText || "";
+    if (/as a (text-)?based ai|as an ai/i.test(text)) {
+      // crude but safe: remove the first paragraph if it's a disclaimer
+      const p = root.querySelector("p");
+      if (p && /as a (text-)?based ai|as an ai/i.test(p.textContent || "")) p.remove();
+    }
+  };
+  killDisclaimers(clone);
+
+  // Put the clone off-screen while rendering
+  clone.style.position = "fixed";
+  clone.style.left = "-99999px";
+  document.body.appendChild(clone);
+
+  // ---- Use jsPDF's HTML renderer (handles pagination → no cut-off)
+  // Leave top space if you later want per-page headers; for now start near top
+  await pdf.html(clone, {
+    x: 48,
+    y: 48,
+    width: pageWidth - 96,
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+  });
+
+  document.body.removeChild(clone);
+
+  // // Optional footer with page numbers (skip cover = page 1)
+  // const total = pdf.internal.getNumberOfPages();
+  // for (let i = 2; i <= total; i++) {
+  //   pdf.setPage(i);
+  //   const w = pdf.internal.pageSize.getWidth();
+  //   const h = pdf.internal.pageSize.getHeight();
+  //   pdf.setFontSize(9);
+  //   pdf.text(`${i - 1} / ${total - 1}`, w - 48, h - 24, { align: "right" as any });
+  // }
+
+  pdf.save(`${displayCompany.replace(/\s+/g, "_")}_Investment_Case.pdf`);
 }
 
   
