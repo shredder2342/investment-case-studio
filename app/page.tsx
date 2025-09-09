@@ -88,6 +88,39 @@ export default function Page() {
   const [error, setError] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
   const draftRef = useRef<HTMLDivElement | null>(null);
+  
+// Company logo (PNG/JPG). Prefer upload; URL is best-effort.
+  const [companyLogoData, setCompanyLogoData] = useState<string | null>(null); // data URL
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+
+// Upload handler -> store as data URL (no CORS problems)
+function onCompanyLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (!/image\/(png|jpeg)/i.test(file.type)) {
+    setError("Please upload a PNG or JPG logo.");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => setCompanyLogoData(reader.result as string);
+  reader.readAsDataURL(file);
+}
+
+// Try to fetch logo from URL -> data URL (may fail if remote blocks CORS)
+async function loadLogoFromUrl() {
+  if (!companyLogoUrl) return;
+  try {
+    const res = await fetch(companyLogoUrl, { mode: "cors" });
+    if (!res.ok) throw new Error("Logo URL not reachable.");
+    const blob = await res.blob();
+    if (!/image\/(png|jpeg)/i.test(blob.type)) throw new Error("Logo must be PNG or JPG.");
+    const reader = new FileReader();
+    reader.onload = () => setCompanyLogoData(reader.result as string);
+    reader.readAsDataURL(blob);
+  } catch (err: any) {
+    setError(err.message || "Could not load logo from URL. Try uploading a file instead.");
+  }
+}
 
   useEffect(() => {
     const savedKey = localStorage.getItem("icstudio_api_key") || "";
